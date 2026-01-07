@@ -10,67 +10,47 @@ function getCookie(req: Request, name: string) {
     return null;
 }
 
-export const onRequest: PagesFunction = async ({ request, env }) => {
-    const url = new URL(request.url);
+export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx) => {
+    const url = new URL(ctx.request.url);
     const code = url.searchParams.get("code");
     const realmId = url.searchParams.get("realmId");
-    const state = url.searchParams.get("state");
 
-    if (!code || !realmId || !state) {
-        return new Response("Missing code, realmId, or state", { status: 400 });
-    }
+    if (!code || !realmId) return new Response("Missing code/realmId", { status: 400 });
 
-    // Validate state against cookie + KV
-    const cookieState = getCookie(request, "fcbn_state");
-    if (!cookieState || cookieState !== state) {
-        return new Response("Invalid state (cookie mismatch)", { status: 400 });
-    }
+    const clientId = ctx.env.QBO_CLIENT_ID!;
+    const clientSecret = ctx.env.QBO_CLIENT_SECRET!;
+    const redirectUri = ctx.env.QBO_REDIRECT_URI!;
 
-    const kv = env.QB_TOKENS as KVNamespace;
-    const stateExists = await kv.get(stateKey(state));
-    if (!stateExists) {
-        return new Response("Invalid state (expired or unknown)", { status: 400 });
-    }
+    const basic = btoa(`${clientId}:${clientSecret}`);
 
-    // one-time use
-    await kv.delete(stateKey(state));
+    const body = new URLSearchParams();
+    body.set("grant_type", "authorization_code");
+    body.set("code", code);
+    body.set("redirect_uri", redirectUri);
 
-    const clientId = env.QB_CLIENT_ID as string;
-    const clientSecret = env.QB_CLIENT_SECRET as string;
-    const redirectUri = env.QB_REDIRECT_URI as string;
+    const tokenResp = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+        method: "POST",
+        headers: {
+            Authorization: `Basic ${basic}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+        },
+        body,
+    });
 
-    try {
-        const tok = await exchangeAuthCodeForTokens({
-            code,
-            redirectUri,
-            clientId,
-            clientSecret,
-        });
+    const json = await tokenResp.json<any>();
+    if (!tokenResp.ok) return new Response(JSON.stringify(json, null, 2), { status: 500 });
 
-        const record: QbTokenRecord = {
-            realmId,
-            access_token: tok.access_token,
-            refresh_token: tok.refresh_token,
-            token_type: tok.token_type,
-            expires_in: tok.expires_in,
-            refresh_expires_in: tok.x_refresh_token_expires_in,
-            obtained_at: nowMs(),
-        };
+    // Store refresh token keyed by realm
+    const record = {
+        realmId,
+        refresh_token: json.refresh_token,
+        refresh_expires_in: json.x_refresh_token_expires_in,
+        updated_at: new Date().toISOString(),
+    };
 
-        // Store token record by realm
-        // (If you only ever use one company, you can also store under a fixed key.)
-        await kv.put(tokenKey(realmId), JSON.stringify(record));
+    await ctx.env.QBO_TOKENS.put(`realm:${realmId}`, JSON.stringify(record));
 
-        // Clear cookie
-        const headers = new Headers();
-        headers.set("Location", `/connected.html?realmId=${encodeURIComponent(realmId)}`);
-        headers.append(
-            "Set-Cookie",
-            `fcbn_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
-        );
-
-        return new Response(null, { status: 302, headers });
-    } catch (e: any) {
-        return new Response(`Callback failed: ${e?.message ?? String(e)}`, { status: 500 });
-    }
+    // redirect back to your “connected” page
+    return Response.redirect(`${url.origin}/connected.html`, 302);
 };

@@ -1,44 +1,55 @@
 import { isAccessTokenExpired, refreshAccessToken, tokenKey, QbTokenRecord, nowMs } from "../_lib/qb";
 
-export const onRequest: PagesFunction = async ({ request, env }) => {
-    const url = new URL(request.url);
+function unauthorized() {
+    return new Response("Unauthorized", { status: 401 });
+}
+
+export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx) => {
+    // Simple shared-secret auth between your API and Pages
+    const expected = ctx.env.QBO_SHARED_SECRET;
+    const got = ctx.request.headers.get("x-qbo-secret");
+    if (!expected || got !== expected) return unauthorized();
+
+    const url = new URL(ctx.request.url);
     const realmId = url.searchParams.get("realmId");
     if (!realmId) return new Response("Missing realmId", { status: 400 });
 
-    const kv = env.QB_TOKENS as KVNamespace;
-    const raw = await kv.get(tokenKey(realmId));
-    if (!raw) return new Response("Not connected for that realmId", { status: 404 });
+    const stored = await ctx.env.QBO_TOKENS.get(`realm:${realmId}`);
+    if (!stored) return new Response("Not connected", { status: 409 });
 
-    const clientId = env.QB_CLIENT_ID as string;
-    const clientSecret = env.QB_CLIENT_SECRET as string;
+    const { refresh_token } = JSON.parse(stored) as { refresh_token: string };
 
-    let rec = JSON.parse(raw) as QbTokenRecord;
+    const clientId = ctx.env.QBO_CLIENT_ID!;
+    const clientSecret = ctx.env.QBO_CLIENT_SECRET!;
+    const basic = btoa(`${clientId}:${clientSecret}`);
 
-    if (isAccessTokenExpired(rec)) {
-        const refreshed = await refreshAccessToken({
-            refreshToken: rec.refresh_token,
-            clientId,
-            clientSecret,
-        });
+    const body = new URLSearchParams();
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", refresh_token);
 
-        rec = {
-            ...rec,
-            access_token: refreshed.access_token,
-            refresh_token: refreshed.refresh_token ?? rec.refresh_token,
-            token_type: refreshed.token_type,
-            expires_in: refreshed.expires_in,
-            refresh_expires_in: refreshed.x_refresh_token_expires_in ?? rec.refresh_expires_in,
-            obtained_at: nowMs(),
-        };
-
-        await kv.put(tokenKey(realmId), JSON.stringify(rec));
-    }
-
-    return Response.json({
-        realmId: rec.realmId,
-        access_token: rec.access_token,
-        token_type: rec.token_type,
-        obtained_at: rec.obtained_at,
-        expires_in: rec.expires_in,
+    const tokenResp = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+        method: "POST",
+        headers: {
+            Authorization: `Basic ${basic}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+        },
+        body,
     });
+
+    const json = await tokenResp.json<any>();
+    if (!tokenResp.ok) return new Response(JSON.stringify(json, null, 2), { status: 500 });
+
+    return new Response(
+        JSON.stringify(
+            {
+                access_token: json.access_token,
+                expires_in: json.expires_in,
+                token_type: json.token_type,
+            },
+            null,
+            2
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+    );
 };
