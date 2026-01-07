@@ -10,7 +10,7 @@ function getCookie(req: Request, name: string) {
     return null;
 }
 
-export const onRequestGet: PagesFunction = async (context) => {
+export const onRequestGet: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (context) => {
     const url = new URL(context.request.url);
 
     const code = url.searchParams.get("code");
@@ -78,6 +78,5 @@ export const onRequestGet: PagesFunction = async (context) => {
         );
     }
 
-    // TODO: store tokens somewhere (KV) instead of discarding them
     return new Response(bodyText, { status: 200, headers: { "content-type": "application/json" } });
 };
