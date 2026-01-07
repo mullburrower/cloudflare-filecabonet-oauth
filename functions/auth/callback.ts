@@ -50,6 +50,16 @@ export const onRequestGet: PagesFunction = async (context) => {
         }),
     });
 
+    const tokenJson = await tokenResp.json();
+    await context.env.QBO_TOKENS.put(
+        realmId,
+        JSON.stringify({
+            ...tokenJson,
+            realmId,
+            savedAt: new Date().toISOString(),
+        })
+    )
+
     const bodyText = await tokenResp.text();
 
     if (!tokenResp.ok) {
