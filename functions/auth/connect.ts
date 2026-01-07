@@ -1,14 +1,17 @@
 ﻿import { stateKey } from "../_lib/qb";
 
-export const onRequest: PagesFunction = async ({ env }) => {
-    const clientId = env.QB_CLIENT_ID as string;
-    const redirectUri = env.QB_REDIRECT_URI as string;
+export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async ({ env }) => {
+    const clientId = (env.QB_CLIENT_ID ?? "").trim();
+    const redirectUri = (env.QB_REDIRECT_URI ?? "").trim();
     const scope = "com.intuit.quickbooks.accounting";
+
+    if (!clientId) return new Response("Missing QB_CLIENT_ID", { status: 500 });
+    if (!redirectUri) return new Response("Missing QB_REDIRECT_URI", { status: 500 });
 
     const state = crypto.randomUUID();
 
     // Store state in KV for 10 minutes
-    await (env.QB_TOKENS as KVNamespace).put(stateKey(state), "1", { expirationTtl: 600 });
+    await env.QBO_TOKENS.put(stateKey(state), "1", { expirationTtl: 600 });
 
     const authorizeUrl =
         "https://appcenter.intuit.com/connect/oauth2" +
