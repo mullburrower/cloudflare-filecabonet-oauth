@@ -1,14 +1,14 @@
-﻿// functions/auth/connect.ts
-export const onRequest: PagesFunction = async (context) => {
-    const { env } = context;
+﻿import { stateKey } from "../_lib/qb";
 
+export const onRequest: PagesFunction = async ({ env }) => {
     const clientId = env.QB_CLIENT_ID as string;
-    const redirectUri = env.QB_REDIRECT_URI as string; // e.g. https://<proj>.pages.dev/auth/callback
+    const redirectUri = env.QB_REDIRECT_URI as string;
     const scope = "com.intuit.quickbooks.accounting";
+
     const state = crypto.randomUUID();
 
-    // You *should* store state somewhere (KV) for real CSRF protection.
-    // For now, keep it simple for exploratory testing.
+    // Store state in KV for 10 minutes
+    await (env.QB_TOKENS as KVNamespace).put(stateKey(state), "1", { expirationTtl: 600 });
 
     const authorizeUrl =
         "https://appcenter.intuit.com/connect/oauth2" +
@@ -18,5 +18,13 @@ export const onRequest: PagesFunction = async (context) => {
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&state=${encodeURIComponent(state)}`;
 
-    return Response.redirect(authorizeUrl, 302);
+    // Also set state cookie for CSRF defense
+    const headers = new Headers();
+    headers.set("Location", authorizeUrl);
+    headers.append(
+        "Set-Cookie",
+        `fcbn_state=${encodeURIComponent(state)}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`
+    );
+
+    return new Response(null, { status: 302, headers });
 };

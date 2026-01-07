@@ -1,55 +1,76 @@
-﻿// functions/auth/callback.ts
-type TokenResponse = {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-    x_refresh_token_expires_in?: number;
-    token_type: string;
-};
+﻿import { exchangeAuthCodeForTokens, nowMs, tokenKey, stateKey, QbTokenRecord } from "../_lib/qb";
 
-export const onRequest: PagesFunction = async (context) => {
-    const { request, env } = context;
+function getCookie(req: Request, name: string) {
+    const raw = req.headers.get("Cookie") || "";
+    const parts = raw.split(";").map((p) => p.trim());
+    for (const p of parts) {
+        const [k, ...rest] = p.split("=");
+        if (k === name) return decodeURIComponent(rest.join("="));
+    }
+    return null;
+}
+
+export const onRequest: PagesFunction = async ({ request, env }) => {
     const url = new URL(request.url);
-
     const code = url.searchParams.get("code");
     const realmId = url.searchParams.get("realmId");
+    const state = url.searchParams.get("state");
 
-    if (!code || !realmId) {
-        return new Response("Missing code or realmId", { status: 400 });
+    if (!code || !realmId || !state) {
+        return new Response("Missing code, realmId, or state", { status: 400 });
     }
+
+    // Validate state against cookie + KV
+    const cookieState = getCookie(request, "fcbn_state");
+    if (!cookieState || cookieState !== state) {
+        return new Response("Invalid state (cookie mismatch)", { status: 400 });
+    }
+
+    const kv = env.QB_TOKENS as KVNamespace;
+    const stateExists = await kv.get(stateKey(state));
+    if (!stateExists) {
+        return new Response("Invalid state (expired or unknown)", { status: 400 });
+    }
+
+    // one-time use
+    await kv.delete(stateKey(state));
 
     const clientId = env.QB_CLIENT_ID as string;
     const clientSecret = env.QB_CLIENT_SECRET as string;
     const redirectUri = env.QB_REDIRECT_URI as string;
 
-    const basic = btoa(`${clientId}:${clientSecret}`);
+    try {
+        const tok = await exchangeAuthCodeForTokens({
+            code,
+            redirectUri,
+            clientId,
+            clientSecret,
+        });
 
-    const body = new URLSearchParams();
-    body.set("grant_type", "authorization_code");
-    body.set("code", code);
-    body.set("redirect_uri", redirectUri);
+        const record: QbTokenRecord = {
+            realmId,
+            access_token: tok.access_token,
+            refresh_token: tok.refresh_token,
+            token_type: tok.token_type,
+            expires_in: tok.expires_in,
+            refresh_expires_in: tok.x_refresh_token_expires_in,
+            obtained_at: nowMs(),
+        };
 
-    // Token endpoint (production):
-    const tokenUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+        // Store token record by realm
+        // (If you only ever use one company, you can also store under a fixed key.)
+        await kv.put(tokenKey(realmId), JSON.stringify(record));
 
-    const resp = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-            "Authorization": `Basic ${basic}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        body,
-    });
+        // Clear cookie
+        const headers = new Headers();
+        headers.set("Location", `/connected.html?realmId=${encodeURIComponent(realmId)}`);
+        headers.append(
+            "Set-Cookie",
+            `fcbn_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+        );
 
-    if (!resp.ok) {
-        const text = await resp.text();
-        return new Response(`Token exchange failed: ${resp.status}\n${text}`, { status: 500 });
+        return new Response(null, { status: 302, headers });
+    } catch (e: any) {
+        return new Response(`Callback failed: ${e?.message ?? String(e)}`, { status: 500 });
     }
-
-    const tokens = (await resp.json()) as TokenResponse;
-
-    // For exploratory testing, just show a success page.
-    // IMPORTANT: do NOT display tokens in a real app.
-    return Response.redirect(`/connected.html?realmId=${encodeURIComponent(realmId)}`, 302);
 };
