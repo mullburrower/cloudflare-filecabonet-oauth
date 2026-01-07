@@ -10,47 +10,64 @@ function getCookie(req: Request, name: string) {
     return null;
 }
 
-export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx) => {
-    const url = new URL(ctx.request.url);
+export const onRequestGet: PagesFunction = async (context) => {
+    const url = new URL(context.request.url);
+
     const code = url.searchParams.get("code");
     const realmId = url.searchParams.get("realmId");
 
-    if (!code || !realmId) return new Response("Missing code/realmId", { status: 400 });
+    const clientId = (context.env.QB_CLIENT_ID ?? "").trim();
+    const clientSecret = (context.env.QB_CLIENT_SECRET ?? "").trim();
+    const redirectUri = (context.env.QB_REDIRECT_URI ?? "").trim();
 
-    const clientId = ctx.env.QBO_CLIENT_ID!;
-    const clientSecret = ctx.env.QBO_CLIENT_SECRET!;
-    const redirectUri = ctx.env.QBO_REDIRECT_URI!;
+    if (!code) return new Response("Missing ?code", { status: 400 });
+    if (!realmId) return new Response("Missing ?realmId", { status: 400 });
 
-    const basic = btoa(`${clientId}:${clientSecret}`);
+    const missing = [
+        !clientId ? "QB_CLIENT_ID" : null,
+        !clientSecret ? "QB_CLIENT_SECRET" : null,
+        !redirectUri ? "QB_REDIRECT_URI" : null,
+    ].filter(Boolean);
 
-    const body = new URLSearchParams();
-    body.set("grant_type", "authorization_code");
-    body.set("code", code);
-    body.set("redirect_uri", redirectUri);
+    if (missing.length) {
+        return new Response(
+            JSON.stringify({ error: "Missing Cloudflare env vars", missing }),
+            { status: 500, headers: { "content-type": "application/json" } }
+        );
+    }
 
     const tokenResp = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
         method: "POST",
         headers: {
-            Authorization: `Basic ${basic}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
+            "content-type": "application/x-www-form-urlencoded",
+            "accept": "application/json",
+            "authorization": `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
         },
-        body,
+        body: new URLSearchParams({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: redirectUri,
+        }),
     });
 
-    const json = await tokenResp.json<any>();
-    if (!tokenResp.ok) return new Response(JSON.stringify(json, null, 2), { status: 500 });
+    const bodyText = await tokenResp.text();
 
-    // Store refresh token keyed by realm
-    const record = {
-        realmId,
-        refresh_token: json.refresh_token,
-        refresh_expires_in: json.x_refresh_token_expires_in,
-        updated_at: new Date().toISOString(),
-    };
+    if (!tokenResp.ok) {
+        return new Response(
+            JSON.stringify({
+                error: "Token exchange failed",
+                status: tokenResp.status,
+                body: bodyText,
+                hints: [
+                    "Are QB_CLIENT_ID / QB_CLIENT_SECRET set in *Production* env (or Preview, if using preview URL)?",
+                    "Does QB_REDIRECT_URI exactly match the Redirect URI configured in Intuit?",
+                    "Are you using Production keys for a real company (and Dev keys only for sandbox)?",
+                ],
+            }),
+            { status: 500, headers: { "content-type": "application/json" } }
+        );
+    }
 
-    await ctx.env.QBO_TOKENS.put(`realm:${realmId}`, JSON.stringify(record));
-
-    // redirect back to your “connected” page
-    return Response.redirect(`${url.origin}/connected.html`, 302);
+    // TODO: store tokens somewhere (KV) instead of discarding them
+    return new Response(bodyText, { status: 200, headers: { "content-type": "application/json" } });
 };
