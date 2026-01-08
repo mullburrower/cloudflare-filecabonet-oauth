@@ -4,7 +4,7 @@ function unauthorized() {
     return new Response("Unauthorized", { status: 401 });
 }
 
-export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx) => {
+export const onRequest: PagesFunction<{ QB_TOKENS: KVNamespace }> = async (ctx) => {
     // Simple shared-secret auth between your API and Pages
     const expected = (ctx.env.FILECABONET_SHARED_SECRET  ?? "").trim();
     const got = ctx.request.headers.get("x-qbo-secret");
@@ -14,14 +14,14 @@ export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx)
     const realmId = url.searchParams.get("realmId");
     if (!realmId) return new Response("Missing realmId", { status: 400 });
 
-    const stored = await ctx.env.QBO_TOKENS.get(tokenKey(realmId));
+    const stored = await ctx.env.QB_TOKENS.get(tokenKey(realmId));
     if (!stored) return new Response("Not connected", { status: 409 });
 
     const record = JSON.parse(stored) as any;
     if (!record.refresh_token) return new Response("Missing refresh_token in KV", { status: 500 });
 
-    const clientId = (ctx.env.QBO_CLIENT_ID ?? "").trim();
-    const clientSecret = (ctx.env.QBO_CLIENT_SECRET ?? "").trim();
+    const clientId = (ctx.env.QB_CLIENT_ID ?? "").trim();
+    const clientSecret = (ctx.env.QB_CLIENT_SECRET ?? "").trim();
     if (!clientId || !clientSecret) return new Response("Missing QB client env vars", { status: 500 });
 
     // If our _lib/qb already computes expiry, use that
@@ -71,7 +71,7 @@ export const onRequest: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (ctx)
         savedAtMs: nowMs(),
     };
 
-    await ctx.env.QBO_TOKENS.put(tokenKey(realmId), JSON.stringify(updated));
+    await ctx.env.QB_TOKENS.put(tokenKey(realmId), JSON.stringify(updated));
 
     return new Response(
         JSON.stringify(

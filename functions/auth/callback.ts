@@ -10,7 +10,7 @@ function getCookie(req: Request, name: string) {
     return null;
 }
 
-export const onRequestGet: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (context) => {
+export const onRequestGet: PagesFunction<{ QB_TOKENS: KVNamespace }> = async (context) => {
     const url = new URL(context.request.url);
 
     const code = url.searchParams.get("code");
@@ -47,7 +47,7 @@ export const onRequestGet: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (c
         });
     }
 
-    const stateExists = await context.env.QBO_TOKENS.get(stateKey(state));
+    const stateExists = await context.env.QB_TOKENS.get(stateKey(state));
     if (!stateExists) {
         return new Response(JSON.stringify({ error: "Bad state (expired or missing)" }), {
             status: 400,
@@ -97,7 +97,7 @@ export const onRequestGet: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (c
         );
     }
 
-    await context.env.QBO_TOKENS.put(
+    await context.env.QB_TOKENS.put(
         tokenKey(realmId),
         JSON.stringify({
             ...tokenJson,
@@ -107,7 +107,7 @@ export const onRequestGet: PagesFunction<{ QBO_TOKENS: KVNamespace }> = async (c
     );
 
     // burn state + clear cookie
-    await context.env.QBO_TOKENS.delete(stateKey(state));
+    await context.env.QB_TOKENS.delete(stateKey(state));
 
     const headers = new Headers();
     headers.set("content-type", "text/html; charset=utf-8");
