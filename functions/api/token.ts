@@ -7,7 +7,7 @@ function unauthorized() {
 export const onRequest: PagesFunction<{ QB_TOKENS: KVNamespace }> = async (ctx) => {
     // Simple shared-secret auth between your API and Pages
     const expected = (ctx.env.FILECABONET_SHARED_SECRET  ?? "").trim();
-    const got = ctx.request.headers.get("x-qbo-secret");
+    const got = ctx.request.headers.get("x-filecabonet-key").trim();
     if (!expected || !isValidString(expected)) return new Response("Server misconfigured: missing shared secret", { status: 500 });
     if (!got || !isValidString(got)) return new Response("Client missing auth header", { status: 401 });
     if (got !== expected) return unauthorized();
