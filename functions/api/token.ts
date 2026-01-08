@@ -8,7 +8,8 @@ export const onRequest: PagesFunction<{ QB_TOKENS: KVNamespace }> = async (ctx) 
     // Simple shared-secret auth between your API and Pages
     const expected = (ctx.env.FILECABONET_SHARED_SECRET  ?? "").trim();
     const got = ctx.request.headers.get("x-qbo-secret");
-    if (!expected || got !== expected) return unauthorized();
+    if (!expected) return new Response("Server misconfigured: missing shared secret", { status: 500 });
+    if (got !== expected) return unauthorized();
 
     const url = new URL(ctx.request.url);
     const realmId = url.searchParams.get("realmId");
