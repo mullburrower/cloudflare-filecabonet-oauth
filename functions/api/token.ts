@@ -1,4 +1,4 @@
-import { isAccessTokenExpired, refreshAccessToken, tokenKey, QbTokenRecord, nowMs } from "../_lib/qb";
+import { isAccessTokenExpired, refreshAccessToken, tokenKey, QbTokenRecord, nowMs, isValidString } from "../_lib/qb";
 
 function unauthorized() {
     return new Response("Unauthorized", { status: 401 });
@@ -8,7 +8,8 @@ export const onRequest: PagesFunction<{ QB_TOKENS: KVNamespace }> = async (ctx) 
     // Simple shared-secret auth between your API and Pages
     const expected = (ctx.env.FILECABONET_SHARED_SECRET  ?? "").trim();
     const got = ctx.request.headers.get("x-qbo-secret");
-    if (!expected) return new Response("Server misconfigured: missing shared secret", { status: 500 });
+    if (!expected || !isValidString(expected)) return new Response("Server misconfigured: missing shared secret", { status: 500 });
+    if (!got || !isValidString(got)) return new Response("Client missing auth header", { status: 401 });
     if (got !== expected) return unauthorized();
 
     const url = new URL(ctx.request.url);

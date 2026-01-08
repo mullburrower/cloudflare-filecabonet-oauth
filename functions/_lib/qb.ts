@@ -96,3 +96,7 @@ export function tokenKey(realmId: string) {
 export function stateKey(state: string) {
     return `state:${state}`;
 }
+
+export function isValidString(s: any): boolean {
+    return s && typeof s === "string" && s.trim().length > 0;
+}
